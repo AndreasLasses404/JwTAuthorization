@@ -1,10 +1,12 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
 
 namespace NorthwindDb
 {
     public partial class EmployeeTerritories
     {
+        [Key]
         public int EmployeeId { get; set; }
         public string TerritoryId { get; set; }
 

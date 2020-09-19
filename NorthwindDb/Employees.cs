@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
 
 namespace NorthwindDb
 {
@@ -11,7 +12,7 @@ namespace NorthwindDb
             InverseReportsToNavigation = new HashSet<Employees>();
             Orders = new HashSet<Orders>();
         }
-
+        [Key]
         public int EmployeeId { get; set; }
         public string LastName { get; set; }
         public string FirstName { get; set; }

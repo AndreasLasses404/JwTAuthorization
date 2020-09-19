@@ -18,6 +18,8 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
 using NorthwindDb;
+using AutoMapper;
+using AutoMapper.Mappers;
 
 namespace IndividuellUppgift
 {
@@ -44,6 +46,7 @@ namespace IndividuellUppgift
             services.AddIdentity<ApplicationUser, IdentityRole>()
             .AddEntityFrameworkStores<ApplicationDbContext>()
             .AddDefaultTokenProviders();
+            
 
             services.AddHttpsRedirection(options =>
             {
@@ -52,6 +55,7 @@ namespace IndividuellUppgift
             });
 
             services.AddHttpContextAccessor();
+            services.AddSingleton<IConfiguration>(Configuration);
 
             services.AddAuthentication(options =>
             {
@@ -69,8 +73,7 @@ namespace IndividuellUppgift
                         ValidateActor = true,
                         ValidIssuer = Configuration["JWT:ValidIssuer"],
                         ValidAudience = Configuration["JWT:ValidAudience"],
-                        ClockSkew = TimeSpan.Zero,
-                        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(Configuration["JWT:Secret"]))
+                        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(Configuration["JWT:Secret"])),
                     };
                 });
 
@@ -88,6 +91,7 @@ namespace IndividuellUppgift
 
             app.UseRouting();
 
+            app.UseAuthentication();
             app.UseAuthorization();
 
             app.UseEndpoints(endpoints =>
