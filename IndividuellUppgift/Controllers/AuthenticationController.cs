@@ -1,14 +1,16 @@
 ﻿using IndividuellUppgift.Authentication;
 using IndividuellUppgift.Models;
+using NorthwindDb;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.IdentityModel.Tokens;
 using Microsoft.Extensions.Configuration;
-using NorthwindDb;
+using Microsoft.IdentityModel.Tokens;
 using System;
 using System.Collections.Generic;
-using System.Linq;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
 using System.Threading.Tasks;
 
 namespace IndividuellUppgift.Controllers
@@ -51,12 +53,8 @@ namespace IndividuellUppgift.Controllers
                 
             };
             newUser.employee.EmployeeId = 0;
-            var createUser = await _userManager.CreateAsync(newUser, user.Password);
-            if (!createUser.Succeeded)
-            {
-                return StatusCode(StatusCodes.Status500InternalServerError, new Response { StatusCode = "Error", Message = "User creation failed! Please check user details and try again." });
-            }
-            
+
+
 
             if(!await _roleManager.RoleExistsAsync(UserRoles.Admin))
             {
@@ -77,6 +75,11 @@ namespace IndividuellUppgift.Controllers
 
             if(await _roleManager.RoleExistsAsync(user.Role))
             {
+                var createUser = await _userManager.CreateAsync(newUser, user.Password);
+                if (!createUser.Succeeded)
+                {
+                    return StatusCode(StatusCodes.Status500InternalServerError, new Response { StatusCode = "Error", Message = "User creation failed! Please check user details and try again." });
+                }
                 await _userManager.AddToRoleAsync(newUser, user.Role);
             }
             else
@@ -84,8 +87,55 @@ namespace IndividuellUppgift.Controllers
                 return StatusCode(StatusCodes.Status500InternalServerError, new Response { StatusCode = "Error", Message = "The role you entered is not valid. Try again" });
             }
 
+
             return Ok(new Response { StatusCode = "Success", Message = "User has been created Successfully" });
         }
+
+        [HttpPost]
+        [Route("login")]
+        public async Task<IActionResult> Login([FromBody]LoginModel loginUser)
+        {
+            var user = await _userManager.FindByNameAsync(loginUser.UserName);
+            if(user != null && await _userManager.CheckPasswordAsync(user, loginUser.Password))
+            {
+                var userRoles = await _userManager.GetRolesAsync(user);
+
+                var authClaims = new List<Claim>
+                {
+                    new Claim(ClaimTypes.Name, user.UserName),
+                    new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+                    new Claim(ClaimTypes.Country, user.employee.Country)
+                };
+                
+
+                foreach(var userRole in userRoles)
+                {
+                    authClaims.Add(new Claim(ClaimTypes.Role, userRole));
+                }
+                var authSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["JWT:Secret"]));
+
+                var token = new JwtSecurityToken(
+                    issuer: _configuration["JWT:ValidIssuer"],
+                    audience: _configuration["JWT:ValidAudience"],
+                    expires: DateTime.Now.AddMinutes(30),
+                    claims: authClaims,
+                    signingCredentials: new SigningCredentials(authSigningKey, SecurityAlgorithms.HmacSha256)
+                    );
+                return Ok(new
+                {
+                    token = new JwtSecurityTokenHandler().WriteToken(token),
+                    expiration = token.ValidTo
+
+                    
+                });
+            }
+            return Unauthorized();
+        }
+
+        //public async Task<IActionResult> TokenRefresh()
+        //{
+
+        //}
 
     }
 }
