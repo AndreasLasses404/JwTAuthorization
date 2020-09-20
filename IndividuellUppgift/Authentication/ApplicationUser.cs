@@ -10,5 +10,6 @@ namespace IndividuellUppgift.Authentication
     public class ApplicationUser : IdentityUser
     {
         public Employees employee { get; set; }
+
     }
 }

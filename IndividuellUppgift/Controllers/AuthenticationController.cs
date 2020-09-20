@@ -12,6 +12,8 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.EntityFrameworkCore;
 
 namespace IndividuellUppgift.Controllers
 {
@@ -37,6 +39,7 @@ namespace IndividuellUppgift.Controllers
 
         [HttpPost]
         [Route("register")]
+        [AllowAnonymous]
         public async Task<IActionResult> RegisterUser([FromBody]RegisterModel user)
         {
             var existingUser = await _userManager.FindByNameAsync(user.UserName);
@@ -93,10 +96,12 @@ namespace IndividuellUppgift.Controllers
 
         [HttpPost]
         [Route("login")]
-        public async Task<IActionResult> Login([FromBody]LoginModel loginUser)
+        [AllowAnonymous]
+        public async Task<IActionResult> Login([FromBody] LoginModel loginUser)
         {
-            var user = await _userManager.FindByNameAsync(loginUser.UserName);
-            if(user != null && await _userManager.CheckPasswordAsync(user, loginUser.Password))
+            var user = await _userManager.Users.Include(u => u.employee)
+                .SingleAsync(u => u.UserName == loginUser.UserName);
+            if (user != null && await _userManager.CheckPasswordAsync(user, loginUser.Password))
             {
                 var userRoles = await _userManager.GetRolesAsync(user);
 
@@ -106,14 +111,14 @@ namespace IndividuellUppgift.Controllers
                     new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
                     new Claim(ClaimTypes.Country, user.employee.Country)
                 };
-                
 
-                foreach(var userRole in userRoles)
+                foreach (var userRole in userRoles)
                 {
                     authClaims.Add(new Claim(ClaimTypes.Role, userRole));
                 }
-                var authSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["JWT:Secret"]));
 
+                var tokenHandler = new JwtSecurityTokenHandler();
+                var authSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["JWT:Secret"]));
                 var token = new JwtSecurityToken(
                     issuer: _configuration["JWT:ValidIssuer"],
                     audience: _configuration["JWT:ValidAudience"],
@@ -121,15 +126,18 @@ namespace IndividuellUppgift.Controllers
                     claims: authClaims,
                     signingCredentials: new SigningCredentials(authSigningKey, SecurityAlgorithms.HmacSha256)
                     );
+
                 return Ok(new
                 {
-                    token = new JwtSecurityTokenHandler().WriteToken(token),
-                    expiration = token.ValidTo
 
+                    token = tokenHandler.WriteToken(token),
+                    expiration = token.ValidTo
                     
+
+
                 });
             }
-            return Unauthorized();
+            return StatusCode(StatusCodes.Status500InternalServerError, new Response { StatusCode = "Error", Message = "" });
         }
 
         //public async Task<IActionResult> TokenRefresh()
