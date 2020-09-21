@@ -7,12 +7,10 @@ using System.Threading.Tasks;
 
 namespace IndividuellUppgift.Authentication
 {
-    [Owned]
+    
     public class RefreshToken
     {
-        [Key]
-        public int Id { get; set; }
-        public ApplicationUser ApplicationUser { get; set; }
+        public int RefreshTokenId { get; set; }
         public string Token { get; set; }
         public DateTime Expires { get; set; }
         public bool IsExpired => DateTime.UtcNow >= Expires;

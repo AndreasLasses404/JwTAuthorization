@@ -43,17 +43,17 @@ namespace IndividuellUppgift.Controllers
             var request = httpContext.HttpContext.User;
             if(request.IsInRole(UserRoles.Admin) || request.IsInRole(UserRoles.CEO))
             {
-                var employees = nwContext.Employees.ToListAsync();
-                var users = await dbContext.Users.Include(u => u.employee).ToListAsync();
+                var users = await dbContext.Users.ToListAsync();
                 List<UserModel> readUsers = new List<UserModel>();
                 foreach (var user in users)
                 {
+                    var employee = nwContext.Employees.Find(user.EmpId);
                     var readuser = new UserModel();
                     readuser.Email = user.Email;
                     readuser.UserName = user.UserName;
-                    readuser.FirstName = user.employee.FirstName;
-                    readuser.LastName = user.employee.LastName;
-                    readuser.Country = user.employee.Country;
+                    readuser.FirstName = employee.FirstName;
+                    readuser.LastName = employee.LastName;
+                    readuser.Country = employee.Country;
                     readUsers.Add(readuser);
                 }
                 return new JsonResult(readUsers);
@@ -69,22 +69,20 @@ namespace IndividuellUppgift.Controllers
         {
             var request = httpContext.HttpContext.User;
             var userexists = await userManager.FindByNameAsync(username);
+            var employee = nwContext.Employees.Find(userexists.EmpId);
             if(userexists == null)
             {
                 return StatusCode(StatusCodes.Status500InternalServerError, new Response { StatusCode = "Error", Message = "User does not exist. Check you spelling" });
             }
             if (request.IsInRole(UserRoles.Admin) || request.IsInRole(UserRoles.CEO))
             {
-                var user = await userManager.Users
-                .Include(u => u.employee)
-                .SingleAsync(u => u.UserName == username);
                 UserModel readUser = new UserModel()
                 {
-                    UserName = user.UserName,
-                    FirstName = user.employee.FirstName,
-                    LastName = user.employee.LastName,
-                    Email = user.Email,
-                    Country = user.employee.Country
+                    UserName = userexists.UserName,
+                    FirstName = employee.FirstName,
+                    LastName = employee.LastName,
+                    Email = userexists.Email,
+                    Country = employee.Country
                 };
                 return new JsonResult(readUser);
             }
@@ -99,6 +97,7 @@ namespace IndividuellUppgift.Controllers
         {
             var request = httpContext.HttpContext.User;
             var userExists = await userManager.FindByNameAsync(username);
+            var employee = await nwContext.Employees.FindAsync(userExists.EmpId);
             if(userExists == null)
             {
                 return StatusCode(StatusCodes.Status500InternalServerError, new Response { StatusCode = "Error", Message = "User does not exist. Check your spelling" });
@@ -106,25 +105,22 @@ namespace IndividuellUppgift.Controllers
 
             if(request.IsInRole(UserRoles.Admin) || request.Identity.Name == userExists.UserName)
             {
-                var userToUpdate = await userManager.Users
-                .Include(u => u.employee).SingleAsync(user => user.UserName == username);
-
                 if(userModel.UserName != null)
                 {
-                    userToUpdate.UserName = userModel.UserName;
-                    userToUpdate.NormalizedUserName = userModel.UserName.ToUpper();
+                    userExists.UserName = userModel.UserName;
+                    userExists.NormalizedUserName = userModel.UserName.ToUpper();
                 }
                 if (userModel.FirstName != null)
-                    userToUpdate.employee.FirstName = userModel.FirstName;
+                    employee.FirstName = userModel.FirstName;
                 if (userModel.LastName != null)
-                    userToUpdate.employee.LastName = userModel.LastName;
+                    employee.LastName = userModel.LastName;
                 if (userModel.Email != null)
                 {
-                    userToUpdate.Email = userModel.Email;
-                    userToUpdate.NormalizedEmail = userModel.Email.ToUpper();
+                    userExists.Email = userModel.Email;
+                    userExists.NormalizedEmail = userModel.Email.ToUpper();
                 }
                 if (userModel.Country != null)
-                    userToUpdate.employee.Country = userModel.Country;
+                    employee.Country = userModel.Country;
                 
 
 

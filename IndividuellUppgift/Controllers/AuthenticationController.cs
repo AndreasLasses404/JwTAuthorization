@@ -14,6 +14,8 @@ using System.Text;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
+using System.Linq;
+using System.Security.Cryptography;
 
 namespace IndividuellUppgift.Controllers
 {
@@ -43,23 +45,24 @@ namespace IndividuellUppgift.Controllers
         public async Task<IActionResult> RegisterUser([FromBody]RegisterModel user)
         {
             var existingUser = await _userManager.FindByNameAsync(user.UserName);
+
             if(existingUser != null)
             {
                 return StatusCode(StatusCodes.Status500InternalServerError, new Response { StatusCode = "Error", Message = "User already exists" });
             }
+
             ApplicationUser newUser = new ApplicationUser()
             {
                 UserName = user.UserName,
                 Email = user.Email,
                 SecurityStamp = Guid.NewGuid().ToString(),
-                employee = (Employees)nwContext.Employees.Find(user.EmpId)
-                
+                EmpId = user.EmpId
             };
-            newUser.employee.EmployeeId = 0;
 
 
 
-            if(!await _roleManager.RoleExistsAsync(UserRoles.Admin))
+
+            if (!await _roleManager.RoleExistsAsync(UserRoles.Admin))
             {
                 await _roleManager.CreateAsync(new IdentityRole(UserRoles.Admin));
             }
@@ -99,51 +102,83 @@ namespace IndividuellUppgift.Controllers
         [AllowAnonymous]
         public async Task<IActionResult> Login([FromBody] LoginModel loginUser)
         {
-            var user = await _userManager.Users.Include(u => u.employee)
-                .SingleAsync(u => u.UserName == loginUser.UserName);
-            if (user != null && await _userManager.CheckPasswordAsync(user, loginUser.Password))
+            var user = await _userManager.FindByNameAsync(loginUser.UserName);
+            var employee = await nwContext.Employees.FindAsync(user.EmpId);
+            if (user != null && employee != null && await _userManager.CheckPasswordAsync(user, loginUser.Password))
             {
-                var userRoles = await _userManager.GetRolesAsync(user);
+                var getToken = GenerateJwtToken(user);
+                var getRefreshToken = GenerateRefreshToken();
+                user.LatestToken = await getToken;
+                await appContext.SaveChangesAsync();
 
-                var authClaims = new List<Claim>
-                {
-                    new Claim(ClaimTypes.Name, user.UserName),
-                    new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
-                    new Claim(ClaimTypes.Country, user.employee.Country)
-                };
-
-                foreach (var userRole in userRoles)
-                {
-                    authClaims.Add(new Claim(ClaimTypes.Role, userRole));
-                }
-
-                var tokenHandler = new JwtSecurityTokenHandler();
-                var authSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["JWT:Secret"]));
-                var token = new JwtSecurityToken(
-                    issuer: _configuration["JWT:ValidIssuer"],
-                    audience: _configuration["JWT:ValidAudience"],
-                    expires: DateTime.Now.AddMinutes(30),
-                    claims: authClaims,
-                    signingCredentials: new SigningCredentials(authSigningKey, SecurityAlgorithms.HmacSha256)
-                    );
-
-                return Ok(new
-                {
-
-                    token = tokenHandler.WriteToken(token),
-                    expiration = token.ValidTo
-                    
-
-
-                });
+                return Ok(new Response {StatusCode ="Success", Message = user.LatestToken.Value});
             }
             return StatusCode(StatusCodes.Status500InternalServerError, new Response { StatusCode = "Error", Message = "" });
         }
 
-        //public async Task<IActionResult> TokenRefresh()
-        //{
+        private async Task<Token> GenerateJwtToken(ApplicationUser user)
+        {
+            var employee = await nwContext.Employees.FindAsync(user.EmpId);
+            var tokenHandler =  new JwtSecurityTokenHandler();
+            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["JWT:Secret"]));
+            var userRoles = await _userManager.GetRolesAsync(user);
 
-        //}
+            var tokenId = Guid.NewGuid().ToString();
+
+            var authClaims = new List<Claim>
+            {
+                new Claim(ClaimTypes.Name, user.UserName),
+                new Claim(JwtRegisteredClaimNames.Jti, tokenId),
+                new Claim(ClaimTypes.Country, employee.Country)
+            };
+
+            foreach (var userRole in userRoles)
+            {
+                authClaims.Add(new Claim(ClaimTypes.Role, userRole));
+            }
+
+            var token = new JwtSecurityToken(
+                issuer: _configuration["JWT:ValidIssuer"],
+                audience: _configuration["JWT:ValidAudience"],
+                expires: DateTime.Now.AddMinutes(30),
+                claims: authClaims,
+                signingCredentials: new SigningCredentials(key, SecurityAlgorithms.HmacSha256)
+                );
+            var generatedToken =tokenHandler.WriteToken(token);
+            Token newToken = new Token();
+            newToken.TokenId = tokenId;
+            newToken.Value = generatedToken;
+
+            return newToken;
+        }
+
+        public RefreshToken GenerateRefreshToken()
+        {
+            return new RefreshToken
+            {
+                Token = RandomTokenString(),
+                Expires = DateTime.Now.AddDays(10),
+                Created = DateTime.Now,
+                CreatedByIp = GetIpAdress()
+
+            };
+        }
+
+        private string RandomTokenString()
+        {
+            using var rngCryptoServiceProvider = new RNGCryptoServiceProvider();
+            var randomBytes = new byte[40];
+            rngCryptoServiceProvider.GetBytes(randomBytes);
+            return BitConverter.ToString(randomBytes).Replace("-", "");
+        }
+
+        private string GetIpAdress()
+        {
+            if (Request.Headers.ContainsKey("X-Forwarded-For"))
+                return Request.Headers["X-Forwarded-For"];
+            else
+                return HttpContext.Connection.RemoteIpAddress.MapToIPv4().ToString();
+        }
 
     }
 }

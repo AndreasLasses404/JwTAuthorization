@@ -33,13 +33,12 @@ namespace IndividuellUppgift.Controllers
         public async Task<IActionResult> GetMyOrders()
         {
             var requestee = _httpContext.HttpContext.User;
-            var user = await _userManager.Users
-                .Include(u => u.employee).ThenInclude(o => o.Orders)
-                .SingleAsync(u => u.UserName == requestee.Identity.Name);
+            var user = await _userManager.FindByNameAsync(requestee.Identity.Name);
+            var employee = await _nwContext.Employees.Include(e => e.Orders).FirstOrDefaultAsync(x => x.EmployeeId == user.EmpId);
 
-            var orders = user.employee.Orders.ToList();
+            var query = employee.Orders.ToList();
 
-            return Ok(orders);
+            return Ok(query);
         }
     }
 }

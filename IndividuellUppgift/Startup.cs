@@ -71,6 +71,7 @@ namespace IndividuellUppgift
                     {
                         ValidateIssuer = true,
                         ValidateActor = true,
+                        ValidateLifetime = true,
                         ValidIssuer = Configuration["JWT:ValidIssuer"],
                         ValidAudience = Configuration["JWT:ValidAudience"],
                         IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(Configuration["JWT:Secret"])),
