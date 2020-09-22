@@ -1,4 +1,5 @@
 ﻿using IndividuellUppgift.Authentication;
+using IndividuellUppgift.Models;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
@@ -34,11 +35,32 @@ namespace IndividuellUppgift.Controllers
         {
             var requestee = _httpContext.HttpContext.User;
             var user = await _userManager.FindByNameAsync(requestee.Identity.Name);
-            var employee = await _nwContext.Employees.Include(e => e.Orders).FirstOrDefaultAsync(x => x.EmployeeId == user.EmpId);
+            var employee = await _nwContext.Employees.Include(e => e.Orders).ThenInclude(c => c.Customer).FirstOrDefaultAsync(x => x.EmployeeId == user.EmpId);
 
+            var orders = new List<OrderModel>();
             var query = employee.Orders.ToList();
+            foreach(var q in query)
+            {
+                var order = new OrderModel();
+                order.CustomerName = q.Customer.CompanyName;
+                order.OrderDate = q.OrderDate.ToString();
+                order.ShippedDate = q.ShippedDate.ToString();
+                order.RequiredDate = q.RequiredDate.ToString();
+                order.ShipCountry = q.ShipCountry;
+                order.ShipName = q.ShipName;
+                order.Freight = q.Freight.ToString();
 
-            return Ok(query);
+                orders.Add(order);
+            }
+
+            return Ok(orders);
         }
+
+        //[HttpGet]
+        //[Route("country/{countryName}")]
+        //public async Task<IActionResult> GetCountryOrders(string countryName)
+        //{
+
+        //}
     }
 }

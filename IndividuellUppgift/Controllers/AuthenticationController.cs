@@ -16,6 +16,8 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using System.Linq;
 using System.Security.Cryptography;
+using System.Threading;
+using AutoMapper;
 
 namespace IndividuellUppgift.Controllers
 {
@@ -28,6 +30,7 @@ namespace IndividuellUppgift.Controllers
         private readonly IConfiguration _configuration;
         private readonly NorthwindContext nwContext;
         private readonly ApplicationDbContext appContext;
+        
 
 
         public AuthenticationController(UserManager<ApplicationUser> userManager, RoleManager<IdentityRole> roleManager, IConfiguration configuration, NorthwindContext dbContext, ApplicationDbContext idContext) : base()
@@ -109,47 +112,90 @@ namespace IndividuellUppgift.Controllers
                 var getToken = GenerateJwtToken(user);
                 var getRefreshToken = GenerateRefreshToken();
                 user.LatestToken = await getToken;
+                user.RefreshToken = getRefreshToken;
                 await appContext.SaveChangesAsync();
 
-                return Ok(new Response {StatusCode ="Success", Message = user.LatestToken.Value});
+                return Ok(new Response {StatusCode ="Success", Message ="User logged in. Eat his kebab", JwtToken = user.LatestToken.Value, RefreshToken = user.RefreshToken.Token});
             }
             return StatusCode(StatusCodes.Status500InternalServerError, new Response { StatusCode = "Error", Message = "" });
         }
 
-        private async Task<Token> GenerateJwtToken(ApplicationUser user)
+        public async Task<Token> GenerateJwtToken(ApplicationUser user)
         {
             var employee = await nwContext.Employees.FindAsync(user.EmpId);
             var tokenHandler =  new JwtSecurityTokenHandler();
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["JWT:Secret"]));
             var userRoles = await _userManager.GetRolesAsync(user);
+            if(employee != null && userRoles != null)
+            {
+                var tokenId = Guid.NewGuid().ToString();
 
-            var tokenId = Guid.NewGuid().ToString();
-
-            var authClaims = new List<Claim>
+                var authClaims = new List<Claim>
             {
                 new Claim(ClaimTypes.Name, user.UserName),
                 new Claim(JwtRegisteredClaimNames.Jti, tokenId),
                 new Claim(ClaimTypes.Country, employee.Country)
             };
 
-            foreach (var userRole in userRoles)
-            {
-                authClaims.Add(new Claim(ClaimTypes.Role, userRole));
+                foreach (var userRole in userRoles)
+                {
+                    authClaims.Add(new Claim(ClaimTypes.Role, userRole));
+                }
+
+                var token = new JwtSecurityToken(
+                    issuer: _configuration["JWT:ValidIssuer"],
+                    audience: _configuration["JWT:ValidAudience"],
+                    expires: DateTime.Now.AddMinutes(30),
+                    claims: authClaims,
+                    signingCredentials: new SigningCredentials(key, SecurityAlgorithms.HmacSha256)
+                    );
+                var generatedToken = tokenHandler.WriteToken(token);
+                Token newToken = new Token();
+                newToken.TokenId = tokenId;
+                newToken.Value = generatedToken;
+                await appContext.SaveChangesAsync();
+                return newToken;
             }
+            throw new ApplicationException("Invalid user request");
 
-            var token = new JwtSecurityToken(
-                issuer: _configuration["JWT:ValidIssuer"],
-                audience: _configuration["JWT:ValidAudience"],
-                expires: DateTime.Now.AddMinutes(30),
-                claims: authClaims,
-                signingCredentials: new SigningCredentials(key, SecurityAlgorithms.HmacSha256)
-                );
-            var generatedToken =tokenHandler.WriteToken(token);
-            Token newToken = new Token();
-            newToken.TokenId = tokenId;
-            newToken.Value = generatedToken;
+        }
 
-            return newToken;
+        
+        private (RefreshToken, ApplicationUser) GetRefreshToken(string refreshToken)
+        {
+            var user = appContext.Users.Include(u => u.RefreshToken).FirstOrDefault(u => u.RefreshToken.Token == refreshToken);
+            var usersToken = user.RefreshToken;
+            if(user == null || usersToken == null)
+            {
+                throw new ApplicationException("Invalid token");
+            }
+            
+            if(usersToken.Token == refreshToken && usersToken.IsActive)
+            {
+                return (usersToken, user);
+            }
+            throw new ApplicationException("Invalid token");
+        }
+        [HttpPut]
+        [Route("token/refreshtoken/{userRefreshToken}")]
+        public async Task<Response> RefreshToken(string userRefreshToken)
+        {
+            var (refreshToken, user) = GetRefreshToken(userRefreshToken);
+
+            var newRefreshToken = GenerateRefreshToken();
+            refreshToken.Revoked = DateTime.Now;
+            refreshToken.ReplacedByToken = newRefreshToken.Token;
+            user.RefreshToken = newRefreshToken;
+
+            var jwtToken =  await GenerateJwtToken(user);
+
+            var response = new Response()
+            {
+                JwtToken = jwtToken.Value,
+                RefreshToken = newRefreshToken.Token
+            };
+            await appContext.SaveChangesAsync();
+            return response;
         }
 
         public RefreshToken GenerateRefreshToken()
@@ -162,6 +208,7 @@ namespace IndividuellUppgift.Controllers
                 CreatedByIp = GetIpAdress()
 
             };
+       
         }
 
         private string RandomTokenString()

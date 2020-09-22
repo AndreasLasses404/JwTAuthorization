@@ -17,6 +17,11 @@ namespace IndividuellUppgift.Authentication
         protected override void OnModelCreating(ModelBuilder builder)
         {
             base.OnModelCreating(builder);
+
+            builder.Entity<ApplicationUser>()
+                .HasOne(a => a.RefreshToken);
+                
+                
         }
     }
 }

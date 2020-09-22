@@ -57,6 +57,7 @@ namespace IndividuellUppgift
             services.AddHttpContextAccessor();
             services.AddSingleton<IConfiguration>(Configuration);
 
+
             services.AddAuthentication(options =>
             {
                 options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
