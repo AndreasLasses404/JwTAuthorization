@@ -9,5 +9,7 @@ namespace IndividuellUppgift.Authentication
     {
         public string TokenId { get; set; }
         public string Value { get; set; }
+        public DateTime Expires { get; set; }
+        public bool Expired => DateTime.Now >= Expires;
     }
 }

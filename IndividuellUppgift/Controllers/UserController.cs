@@ -38,25 +38,12 @@ namespace IndividuellUppgift.Controllers
         [Authorize]
         public async Task<IActionResult> GetUsers()
         {
-
-            //SKAPA AUTHORIZATION HÄR
-            var request = httpContext.HttpContext.User;
-            if(request.IsInRole(UserRoles.Admin) || request.IsInRole(UserRoles.CEO))
+            var requestSender = httpContext.HttpContext.User;
+            if(requestSender.IsInRole(UserRoles.Admin) || requestSender.IsInRole(UserRoles.CEO))
             {
-                var users = await dbContext.Users.ToListAsync();
-                List<UserModel> readUsers = new List<UserModel>();
-                foreach (var user in users)
-                {
-                    var employee = nwContext.Employees.Find(user.EmpId);
-                    var readuser = new UserModel();
-                    readuser.Email = user.Email;
-                    readuser.UserName = user.UserName;
-                    readuser.FirstName = employee.FirstName;
-                    readuser.LastName = employee.LastName;
-                    readuser.Country = employee.Country;
-                    readUsers.Add(readuser);
-                }
-                return new JsonResult(readUsers);
+                var usersToGet = await dbContext.Users.ToListAsync();
+                List<UserModel> users = GetUsersList(usersToGet);
+                return Ok(users);
             }
             return Unauthorized();
 
@@ -67,16 +54,16 @@ namespace IndividuellUppgift.Controllers
         [Authorize]
         public async Task<IActionResult> GetUser(string username)
         {
-            var request = httpContext.HttpContext.User;
+            var requestSender = httpContext.HttpContext.User;
             var userexists = await userManager.FindByNameAsync(username);
             var employee = nwContext.Employees.Find(userexists.EmpId);
             if(userexists == null)
             {
-                return StatusCode(StatusCodes.Status500InternalServerError, new Response { StatusCode = "Error", Message = "User does not exist. Check you spelling" });
+                return StatusCode(StatusCodes.Status500InternalServerError, new Response { StatusCode = "Error", Message = "User does not exist" });
             }
-            if (request.IsInRole(UserRoles.Admin) || request.IsInRole(UserRoles.CEO))
+            if (requestSender.IsInRole(UserRoles.Admin) || requestSender.IsInRole(UserRoles.CEO))
             {
-                UserModel readUser = new UserModel()
+                UserModel UserToGet = new UserModel()
                 {
                     UserName = userexists.UserName,
                     FirstName = employee.FirstName,
@@ -84,31 +71,32 @@ namespace IndividuellUppgift.Controllers
                     Email = userexists.Email,
                     Country = employee.Country
                 };
-                return new JsonResult(readUser);
+                return Ok(UserToGet);
             }
-
             return Unauthorized();
         }
 
-        [HttpPatch]
-        [Route("{username}")]
+        [HttpPut]
+        [Route("update/{username}")]
         [Authorize]
-        public async Task<IActionResult>UpdateUser(string username, [FromBody]UserModel userModel)
+        public async Task<IActionResult>UpdateUser(string userName, [FromBody]UserModel userModel)
         {
-            var request = httpContext.HttpContext.User;
-            var userExists = await userManager.FindByNameAsync(username);
-            var employee = await nwContext.Employees.FindAsync(userExists.EmpId);
-            if(userExists == null)
+            
+            var requestSender = httpContext.HttpContext.User;
+            var userSender = await userManager.FindByNameAsync(requestSender.Identity.Name);
+            var userToUpdate = await userManager.FindByNameAsync(userName);
+            var employee = await nwContext.Employees.FindAsync(userSender.EmpId);
+            if(userSender == null ||userToUpdate == null ||employee == null)
             {
                 return StatusCode(StatusCodes.Status500InternalServerError, new Response { StatusCode = "Error", Message = "User does not exist. Check your spelling" });
             }
 
-            if(request.IsInRole(UserRoles.Admin) || request.Identity.Name == userExists.UserName)
+            if(requestSender.IsInRole(UserRoles.Admin) || requestSender.Identity.Name == userSender.UserName)
             {
                 if(userModel.UserName != null)
                 {
-                    userExists.UserName = userModel.UserName;
-                    userExists.NormalizedUserName = userModel.UserName.ToUpper();
+                    userToUpdate.UserName = userModel.UserName;
+                    userToUpdate.NormalizedUserName = userModel.UserName.ToUpper();
                 }
                 if (userModel.FirstName != null)
                     employee.FirstName = userModel.FirstName;
@@ -116,13 +104,13 @@ namespace IndividuellUppgift.Controllers
                     employee.LastName = userModel.LastName;
                 if (userModel.Email != null)
                 {
-                    userExists.Email = userModel.Email;
-                    userExists.NormalizedEmail = userModel.Email.ToUpper();
+                    userToUpdate.Email = userModel.Email;
+                    userToUpdate.NormalizedEmail = userModel.Email.ToUpper();
                 }
                 if (userModel.Country != null)
                     employee.Country = userModel.Country;
-                
-
+                if ((userModel.Role != null && await userManager.IsInRoleAsync(userSender, UserRoles.Admin)) && await roleManager.RoleExistsAsync(userModel.Role)) 
+                    await userManager.AddToRoleAsync(userToUpdate, userModel.Role);
 
                 await dbContext.SaveChangesAsync();
 
@@ -136,19 +124,35 @@ namespace IndividuellUppgift.Controllers
         [Authorize]
         public async Task<IActionResult>DeleteUser(string username)
         {
-            var request = httpContext.HttpContext.User;
+            var requestSender = httpContext.HttpContext.User;
              var user = await userManager.FindByNameAsync(username);
             if(user == null)
             {
-                return StatusCode(StatusCodes.Status500InternalServerError, new Response { StatusCode = "Error", Message = "User does not exist. Check your spelling" });
+                return StatusCode(StatusCodes.Status500InternalServerError, new Response { StatusCode = "Error", Message = "User does not exist" });
             }
-            if (request.IsInRole(UserRoles.Admin))
+            if (requestSender.IsInRole(UserRoles.Admin))
             {
                 await userManager.DeleteAsync(user);
-
                 return Ok();
             }
             return Unauthorized();
+        }
+
+        private List<UserModel> GetUsersList(List<ApplicationUser> users)
+        {
+            var userList = new List<UserModel>();
+            foreach (var user in users)
+            {
+                var employee = nwContext.Employees.Find(user.EmpId);
+                var currentUser = new UserModel();
+                currentUser.Email = user.Email;
+                currentUser.UserName = user.UserName;
+                currentUser.FirstName = employee.FirstName;
+                currentUser.LastName = employee.LastName;
+                currentUser.Country = employee.Country;
+                userList.Add(currentUser);
+            }
+            return userList;
         }
     }
 }

@@ -18,6 +18,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Threading;
 using AutoMapper;
+using Microsoft.VisualBasic.CompilerServices;
 
 namespace IndividuellUppgift.Controllers
 {
@@ -62,9 +63,6 @@ namespace IndividuellUppgift.Controllers
                 EmpId = user.EmpId
             };
 
-
-
-
             if (!await _roleManager.RoleExistsAsync(UserRoles.Admin))
             {
                 await _roleManager.CreateAsync(new IdentityRole(UserRoles.Admin));
@@ -81,23 +79,36 @@ namespace IndividuellUppgift.Controllers
             {
                 await _roleManager.CreateAsync(new IdentityRole(UserRoles.Employee));
             }
-
-            if(await _roleManager.RoleExistsAsync(user.Role))
+            var createUser = await _userManager.CreateAsync(newUser, user.Password);
+            if (!createUser.Succeeded)
             {
-                var createUser = await _userManager.CreateAsync(newUser, user.Password);
-                if (!createUser.Succeeded)
-                {
-                    return StatusCode(StatusCodes.Status500InternalServerError, new Response { StatusCode = "Error", Message = "User creation failed! Please check user details and try again." });
-                }
-                await _userManager.AddToRoleAsync(newUser, user.Role);
+                return StatusCode(StatusCodes.Status500InternalServerError, new Response { StatusCode = "Error", Message = "User creation failed! Please check user details and try again." });
+            }
+            var admins = await _userManager.GetUsersInRoleAsync(UserRoles.Admin);
+            if(admins.Count == 0)
+            {
+                await _userManager.AddToRoleAsync(newUser, UserRoles.Admin);
             }
             else
             {
-                return StatusCode(StatusCodes.Status500InternalServerError, new Response { StatusCode = "Error", Message = "The role you entered is not valid. Try again" });
+                await _userManager.AddToRoleAsync(newUser, UserRoles.Employee);
             }
+            var emp = nwContext.Employees.Where(u => u.EmployeeId == newUser.EmpId).FirstOrDefault();
+            if(emp != null)
+            {
+                await appContext.SaveChangesAsync();
 
+                return Ok(new AuthenticateResponse()
+                {
+                    UserName = newUser.UserName,
+                    FirstName = emp.FirstName,
+                    LastName = emp.LastName,
+                    Email = newUser.Email,
+                    Created = DateTime.Now
+                });
+            }
+            return Unauthorized();
 
-            return Ok(new Response { StatusCode = "Success", Message = "User has been created Successfully" });
         }
 
         [HttpPost]
@@ -111,15 +122,15 @@ namespace IndividuellUppgift.Controllers
             {
                 var getToken = GenerateJwtToken(user);
                 var getRefreshToken = GenerateRefreshToken();
+                
                 user.LatestToken = await getToken;
                 user.RefreshToken = getRefreshToken;
                 await appContext.SaveChangesAsync();
 
-                return Ok(new Response {StatusCode ="Success", Message ="User logged in. Eat his kebab", JwtToken = user.LatestToken.Value, RefreshToken = user.RefreshToken.Token});
+                return Ok(new AuthenticateResponse() { FirstName = employee.FirstName, LastName = employee.LastName, UserName = user.UserName, Created = DateTime.Now, Email = user.Email, JwtToken = user.LatestToken.Value, RefreshToken = user.RefreshToken.Token, JwtExpires = user.LatestToken.Expires, RefreshExpires = user.RefreshToken.Expires });
             }
             return StatusCode(StatusCodes.Status500InternalServerError, new Response { StatusCode = "Error", Message = "" });
         }
-
         public async Task<Token> GenerateJwtToken(ApplicationUser user)
         {
             var employee = await nwContext.Employees.FindAsync(user.EmpId);
@@ -145,22 +156,22 @@ namespace IndividuellUppgift.Controllers
                 var token = new JwtSecurityToken(
                     issuer: _configuration["JWT:ValidIssuer"],
                     audience: _configuration["JWT:ValidAudience"],
+                    notBefore: DateTime.Now,
                     expires: DateTime.Now.AddMinutes(30),
                     claims: authClaims,
                     signingCredentials: new SigningCredentials(key, SecurityAlgorithms.HmacSha256)
-                    );
+                    );;
                 var generatedToken = tokenHandler.WriteToken(token);
                 Token newToken = new Token();
                 newToken.TokenId = tokenId;
                 newToken.Value = generatedToken;
+                newToken.Expires = token.ValidTo;
                 await appContext.SaveChangesAsync();
                 return newToken;
             }
             throw new ApplicationException("Invalid user request");
 
         }
-
-        
         private (RefreshToken, ApplicationUser) GetRefreshToken(string refreshToken)
         {
             var user = appContext.Users.Include(u => u.RefreshToken).FirstOrDefault(u => u.RefreshToken.Token == refreshToken);
@@ -178,26 +189,27 @@ namespace IndividuellUppgift.Controllers
         }
         [HttpPut]
         [Route("token/refreshtoken/{userRefreshToken}")]
-        public async Task<Response> RefreshToken(string userRefreshToken)
+        public async Task<AuthenticateResponse> RefreshToken(string userRefreshToken)
         {
             var (refreshToken, user) = GetRefreshToken(userRefreshToken);
-
             var newRefreshToken = GenerateRefreshToken();
             refreshToken.Revoked = DateTime.Now;
             refreshToken.ReplacedByToken = newRefreshToken.Token;
             user.RefreshToken = newRefreshToken;
-
             var jwtToken =  await GenerateJwtToken(user);
-
-            var response = new Response()
+            user.LatestToken = jwtToken;
+            
+            var response = new AuthenticateResponse()
             {
                 JwtToken = jwtToken.Value,
-                RefreshToken = newRefreshToken.Token
+                RefreshToken = newRefreshToken.Token,
+                JwtExpires = user.LatestToken.Expires,
+                RefreshExpires = user.RefreshToken.Expires
+                
             };
             await appContext.SaveChangesAsync();
             return response;
         }
-
         public RefreshToken GenerateRefreshToken()
         {
             return new RefreshToken
@@ -210,7 +222,6 @@ namespace IndividuellUppgift.Controllers
             };
        
         }
-
         private string RandomTokenString()
         {
             using var rngCryptoServiceProvider = new RNGCryptoServiceProvider();
@@ -218,7 +229,6 @@ namespace IndividuellUppgift.Controllers
             rngCryptoServiceProvider.GetBytes(randomBytes);
             return BitConverter.ToString(randomBytes).Replace("-", "");
         }
-
         private string GetIpAdress()
         {
             if (Request.Headers.ContainsKey("X-Forwarded-For"))

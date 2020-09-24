@@ -15,9 +15,7 @@ namespace IndividuellUppgift.Models
         public string Email { get; set; }
         [Required(ErrorMessage = "Password is required")]
         public string Password { get; set; }
-        public string Role { get; set; }
-
-       public int EmpId { get; set; }
+        public int EmpId { get; set; }
 
     }
 }
