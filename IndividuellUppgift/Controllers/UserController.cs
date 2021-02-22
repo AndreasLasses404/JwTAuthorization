@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Net.Http.Headers;
 using NorthwindDb;
 using System;
 using System.Collections.Generic;
@@ -39,7 +40,13 @@ namespace IndividuellUppgift.Controllers
         public async Task<IActionResult> GetUsers()
         {
             var requestSender = httpContext.HttpContext.User;
-            if(requestSender.IsInRole(UserRoles.Admin) || requestSender.IsInRole(UserRoles.CEO))
+            var user = await dbContext.Users.FirstOrDefaultAsync(un => un.UserName == requestSender.Identity.Name);
+            var token = Request.Headers[HeaderNames.Authorization];
+            if (!ValidateToken(user, token))
+            {
+                return Unauthorized();
+            }
+            if (requestSender.IsInRole(UserRoles.Admin) || requestSender.IsInRole(UserRoles.CEO))
             {
                 var usersToGet = await dbContext.Users.ToListAsync();
                 List<UserModel> users = GetUsersList(usersToGet);
@@ -55,9 +62,15 @@ namespace IndividuellUppgift.Controllers
         public async Task<IActionResult> GetUser(string username)
         {
             var requestSender = httpContext.HttpContext.User;
+            var user = await dbContext.Users.FirstOrDefaultAsync(un => un.UserName == requestSender.Identity.Name);
             var userexists = await userManager.FindByNameAsync(username);
             var employee = nwContext.Employees.Find(userexists.EmpId);
-            if(userexists == null)
+            var token = Request.Headers[HeaderNames.Authorization];
+            if (!ValidateToken(user, token))
+            {
+                return Unauthorized();
+            }
+            if (userexists == null)
             {
                 return StatusCode(StatusCodes.Status500InternalServerError, new Response { StatusCode = "Error", Message = "User does not exist" });
             }
@@ -83,15 +96,20 @@ namespace IndividuellUppgift.Controllers
         {
             
             var requestSender = httpContext.HttpContext.User;
-            var userSender = await userManager.FindByNameAsync(requestSender.Identity.Name);
+            var user = await userManager.FindByNameAsync(requestSender.Identity.Name);
             var userToUpdate = await userManager.FindByNameAsync(userName);
-            var employee = await nwContext.Employees.FindAsync(userSender.EmpId);
-            if(userSender == null ||userToUpdate == null ||employee == null)
+            var employee = await nwContext.Employees.FindAsync(user.EmpId);
+            var token = Request.Headers[HeaderNames.Authorization];
+            if (!ValidateToken(user, token))
+            {
+                return Unauthorized();
+            }
+            if (user == null ||userToUpdate == null ||employee == null)
             {
                 return StatusCode(StatusCodes.Status500InternalServerError, new Response { StatusCode = "Error", Message = "User does not exist. Check your spelling" });
             }
 
-            if(requestSender.IsInRole(UserRoles.Admin) || requestSender.Identity.Name == userSender.UserName)
+            if(requestSender.IsInRole(UserRoles.Admin) || userToUpdate.UserName == user.UserName)
             {
                 if(userModel.UserName != null)
                 {
@@ -109,12 +127,12 @@ namespace IndividuellUppgift.Controllers
                 }
                 if (userModel.Country != null)
                     employee.Country = userModel.Country;
-                if ((userModel.Role != null && await userManager.IsInRoleAsync(userSender, UserRoles.Admin)) && await roleManager.RoleExistsAsync(userModel.Role)) 
+                if ((userModel.Role != null && await userManager.IsInRoleAsync(user, UserRoles.Admin)) && await roleManager.RoleExistsAsync(userModel.Role))
                     await userManager.AddToRoleAsync(userToUpdate, userModel.Role);
 
                 await dbContext.SaveChangesAsync();
 
-                return Ok();
+                return Ok(new AuthenticateResponse() {UserName = userToUpdate.UserName, FirstName = employee.FirstName, LastName = employee.LastName });
             }
             return Unauthorized();
         }
@@ -125,14 +143,20 @@ namespace IndividuellUppgift.Controllers
         public async Task<IActionResult>DeleteUser(string username)
         {
             var requestSender = httpContext.HttpContext.User;
-             var user = await userManager.FindByNameAsync(username);
-            if(user == null)
+             var userToDelete = await userManager.FindByNameAsync(username);
+            var user = await userManager.FindByNameAsync(requestSender.Identity.Name);
+            var token = Request.Headers[HeaderNames.Authorization];
+            if (!ValidateToken(user, token))
+            {
+                return Unauthorized();
+            }
+            if (userToDelete == null)
             {
                 return StatusCode(StatusCodes.Status500InternalServerError, new Response { StatusCode = "Error", Message = "User does not exist" });
             }
             if (requestSender.IsInRole(UserRoles.Admin))
             {
-                await userManager.DeleteAsync(user);
+                await userManager.DeleteAsync(userToDelete);
                 return Ok();
             }
             return Unauthorized();
@@ -153,6 +177,14 @@ namespace IndividuellUppgift.Controllers
                 userList.Add(currentUser);
             }
             return userList;
+        }
+        public static bool ValidateToken(ApplicationUser user, string token)
+        {
+            if ("Bearer " + user.LatestToken.Value == token)
+            {
+                return true;
+            }
+            return false;
         }
     }
 }

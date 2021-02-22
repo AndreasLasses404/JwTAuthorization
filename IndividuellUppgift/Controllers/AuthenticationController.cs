@@ -48,6 +48,7 @@ namespace IndividuellUppgift.Controllers
         [AllowAnonymous]
         public async Task<IActionResult> RegisterUser([FromBody]RegisterModel user)
         {
+            //Kollar om användaren redan existerar i db. Om så är fallet, avbryter metoden och skickar felmeddelande.
             var existingUser = await _userManager.FindByNameAsync(user.UserName);
 
             if(existingUser != null)
@@ -55,6 +56,7 @@ namespace IndividuellUppgift.Controllers
                 return StatusCode(StatusCodes.Status500InternalServerError, new Response { StatusCode = "Error", Message = "User already exists" });
             }
 
+            //Skapar en ny användare med informationen som finns i bodyn.
             ApplicationUser newUser = new ApplicationUser()
             {
                 UserName = user.UserName,
@@ -63,6 +65,7 @@ namespace IndividuellUppgift.Controllers
                 EmpId = user.EmpId
             };
 
+            //Kollar om rollerna existerar i db. Om inte, skapar dem.
             if (!await _roleManager.RoleExistsAsync(UserRoles.Admin))
             {
                 await _roleManager.CreateAsync(new IdentityRole(UserRoles.Admin));
@@ -79,20 +82,27 @@ namespace IndividuellUppgift.Controllers
             {
                 await _roleManager.CreateAsync(new IdentityRole(UserRoles.Employee));
             }
+
+            //Sparar den skapade användaren i db och kollar så att det gick bra. Om ej, avbryter metoden och lämnar felmeddelande.
             var createUser = await _userManager.CreateAsync(newUser, user.Password);
             if (!createUser.Succeeded)
             {
                 return StatusCode(StatusCodes.Status500InternalServerError, new Response { StatusCode = "Error", Message = "User creation failed! Please check user details and try again." });
             }
+
+            //Första användaren som skapas blir admin och employee. I övrigt blir nya users endast employees.
             var admins = await _userManager.GetUsersInRoleAsync(UserRoles.Admin);
             if(admins.Count == 0)
             {
                 await _userManager.AddToRoleAsync(newUser, UserRoles.Admin);
+                await _userManager.AddToRoleAsync(newUser, UserRoles.Employee);
             }
             else
             {
                 await _userManager.AddToRoleAsync(newUser, UserRoles.Employee);
             }
+
+            //Hämtar employeen som användaren är knuten till för att sätta firstname och lastname på svaret som ska skickas till klienten.
             var emp = nwContext.Employees.Where(u => u.EmployeeId == newUser.EmpId).FirstOrDefault();
             if(emp != null)
             {
@@ -107,7 +117,7 @@ namespace IndividuellUppgift.Controllers
                     Created = DateTime.Now
                 });
             }
-            return Unauthorized();
+            return StatusCode(StatusCodes.Status500InternalServerError, new Response { StatusCode = "Error", Message = "User creation failed! Please check user details and try again." });
 
         }
 
@@ -116,43 +126,51 @@ namespace IndividuellUppgift.Controllers
         [AllowAnonymous]
         public async Task<IActionResult> Login([FromBody] LoginModel loginUser)
         {
+            //Hämtar användaren med som skickar loginrequest. 
             var user = await _userManager.FindByNameAsync(loginUser.UserName);
-            var employee = await nwContext.Employees.FindAsync(user.EmpId);
-            if (user != null && employee != null && await _userManager.CheckPasswordAsync(user, loginUser.Password))
+
+            //Kollar så att användare existerar samt matchar lösenord
+            if (user != null && await _userManager.CheckPasswordAsync(user, loginUser.Password))
             {
-                var getToken = GenerateJwtToken(user);
+                //Skapar jwt och refreshtoken och tilldelar dessa till användaren som skickar loginrequest
+                var getToken =  await GenerateJwtToken(user);
                 var getRefreshToken = GenerateRefreshToken();
-                
-                user.LatestToken = await getToken;
+                var employee = await nwContext.Employees.FindAsync(user.EmpId);
+                user.LatestToken = getToken;
                 user.RefreshToken = getRefreshToken;
                 await appContext.SaveChangesAsync();
 
+                //Skickar tillbaka värden som ska sparas i klientdb
                 return Ok(new AuthenticateResponse() { FirstName = employee.FirstName, LastName = employee.LastName, UserName = user.UserName, Created = DateTime.Now, Email = user.Email, JwtToken = user.LatestToken.Value, RefreshToken = user.RefreshToken.Token, JwtExpires = user.LatestToken.Expires, RefreshExpires = user.RefreshToken.Expires });
             }
-            return StatusCode(StatusCodes.Status500InternalServerError, new Response { StatusCode = "Error", Message = "" });
+            return StatusCode(StatusCodes.Status500InternalServerError, new Response { StatusCode = "Error", Message = "User and/or password is incorrect" });
         }
         public async Task<Token> GenerateJwtToken(ApplicationUser user)
         {
+            //Hittar användaren och skapar en tokenhandler
             var employee = await nwContext.Employees.FindAsync(user.EmpId);
             var tokenHandler =  new JwtSecurityTokenHandler();
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["JWT:Secret"]));
             var userRoles = await _userManager.GetRolesAsync(user);
+            //Kollar så att användaren existerar och hör till åtminstone en roll
             if(employee != null && userRoles != null)
             {
                 var tokenId = Guid.NewGuid().ToString();
 
+                //Sätter claims av typ Name, tokenid, country och roller för användaren
                 var authClaims = new List<Claim>
-            {
-                new Claim(ClaimTypes.Name, user.UserName),
-                new Claim(JwtRegisteredClaimNames.Jti, tokenId),
-                new Claim(ClaimTypes.Country, employee.Country)
-            };
+                {
+                    new Claim(ClaimTypes.Name, user.UserName),
+                    new Claim(JwtRegisteredClaimNames.Jti, tokenId),
+                    new Claim(ClaimTypes.Country, employee.Country)
+                };
 
                 foreach (var userRole in userRoles)
                 {
                     authClaims.Add(new Claim(ClaimTypes.Role, userRole));
                 }
 
+                //Skapar token, sätter in claims, issuer, lifetime osv osv samt serialiserar den.
                 var token = new JwtSecurityToken(
                     issuer: _configuration["JWT:ValidIssuer"],
                     audience: _configuration["JWT:ValidAudience"],
@@ -162,11 +180,15 @@ namespace IndividuellUppgift.Controllers
                     signingCredentials: new SigningCredentials(key, SecurityAlgorithms.HmacSha256)
                     );;
                 var generatedToken = tokenHandler.WriteToken(token);
+
+                //Instantierar en ny token i db och sätter den generarede tokens värde i den, samt sparar den i db.
                 Token newToken = new Token();
                 newToken.TokenId = tokenId;
                 newToken.Value = generatedToken;
                 newToken.Expires = token.ValidTo;
                 await appContext.SaveChangesAsync();
+
+                //Skickar tillbaka token ut från denna metod
                 return newToken;
             }
             throw new ApplicationException("Invalid user request");
@@ -174,6 +196,7 @@ namespace IndividuellUppgift.Controllers
         }
         private (RefreshToken, ApplicationUser) GetRefreshToken(string refreshToken)
         {
+            //Hämtar användaren vars refreshtoken matchar den refreshtoken som ska användas.
             var user = appContext.Users.Include(u => u.RefreshToken).FirstOrDefault(u => u.RefreshToken.Token == refreshToken);
             var usersToken = user.RefreshToken;
             if(user == null || usersToken == null)
@@ -181,6 +204,7 @@ namespace IndividuellUppgift.Controllers
                 throw new ApplicationException("Invalid token");
             }
             
+            //Kollar så att användarens refreshtoken matchar det inmatade värdet och så att refreshtoken inte är expired
             if(usersToken.Token == refreshToken && usersToken.IsActive)
             {
                 return (usersToken, user);
@@ -191,14 +215,22 @@ namespace IndividuellUppgift.Controllers
         [Route("token/refreshtoken/{userRefreshToken}")]
         public async Task<AuthenticateResponse> RefreshToken(string userRefreshToken)
         {
+            //Hämtar refreshtoken och användare som äger refreshtoken
             var (refreshToken, user) = GetRefreshToken(userRefreshToken);
+
+            //Generar ny refreshtoken och sätter revoked och replaced by på den gamla
             var newRefreshToken = GenerateRefreshToken();
             refreshToken.Revoked = DateTime.Now;
             refreshToken.ReplacedByToken = newRefreshToken.Token;
+
+            //Tilldelar den nya refreshtoken till användaren som skickar requesten
             user.RefreshToken = newRefreshToken;
+
+            //Genererar ny jwttoken samt tilldelar det till användaren som skickar requesten
             var jwtToken =  await GenerateJwtToken(user);
             user.LatestToken = jwtToken;
             
+            //Skickar tillbaka informationen till klienten samt uppdaterar db.
             var response = new AuthenticateResponse()
             {
                 JwtToken = jwtToken.Value,
@@ -212,6 +244,7 @@ namespace IndividuellUppgift.Controllers
         }
         public RefreshToken GenerateRefreshToken()
         {
+            
             return new RefreshToken
             {
                 Token = RandomTokenString(),
@@ -224,6 +257,7 @@ namespace IndividuellUppgift.Controllers
         }
         private string RandomTokenString()
         {
+            //Skapar en slumpad sträng som blir tokenvärdet på refreshtoken
             using var rngCryptoServiceProvider = new RNGCryptoServiceProvider();
             var randomBytes = new byte[40];
             rngCryptoServiceProvider.GetBytes(randomBytes);
@@ -238,4 +272,6 @@ namespace IndividuellUppgift.Controllers
         }
 
     }
+
 }
+

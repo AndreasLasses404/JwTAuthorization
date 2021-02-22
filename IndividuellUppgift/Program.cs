@@ -23,4 +23,5 @@ namespace IndividuellUppgift
                     webBuilder.UseStartup<Startup>();
                 });
     }
+    
 }
